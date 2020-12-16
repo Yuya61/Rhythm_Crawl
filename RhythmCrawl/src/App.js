@@ -1,242 +1,156 @@
-import React, { Component } from "react";
-import "./App.css";
-import _ from "lodash";
-
-// For dark mode
-import { ThemeProvider } from "styled-components";
-import { lightTheme, darkTheme } from "./services/theme";
-import { GlobalStyle } from "./services/global";
-
-import Navbar from "./components/navbar";
-import Player from "./components/player";
-import Instructions from "./components/instructions/index";
-import Command from "./components/command";
-
-import youtube, { baseTerms } from "./services/youtube";
-
-require("dotenv").config();
-
-// document.body.style.backgroundColor = "#282c34";
+import React, { Component } from 'react';
+import PropTypes from 'prop-types';
+import { bindActionCreators } from 'redux';
+import { connect } from 'react-redux';
+import { fetchUser } from './actions/userActions';
+import { setToken } from './actions/tokenActions';
+import {
+  playSong,
+  stopSong,
+  pauseSong,
+  resumeSong,
+} from './actions/songActions';
+import Header from './components/Header';
+import Footer from './components/Footer';
+import UserPlaylists from './components/UserPlaylists';
+import MainView from './components/MainView';
+import ArtWork from './components/ArtWork';
+import MainHeader from './components/MainHeader';
+import SideMenu from './components/SideMenu';
+import './App.css';
 
 class App extends Component {
-  state = {
-    inputTerm: "",
-    commands: [],
-    videos: [],
-    selectedVideo: null,
-    instruction: "",
-    vdoEvent: null,
-    vdoPauseTime: 0,
-    theme: "dark",
-  };
+  static audio;
 
-  handleVideoEvent = (c) => {
-    this.setState({
-      vdoEvent: c,
-    });
-  };
+  componentDidMount() {
+    let hashParams = {};
+    let e,
+      r = /([^&;=]+)=?([^&;]*)/g,
+      q = window.location.hash.substring(1);
+    while ((e = r.exec(q))) {
+      hashParams[e[1]] = decodeURIComponent(e[2]);
+    }
 
-  handleInputChange = (event) => {
-    this.setState({
-      inputTerm: event.target.value,
-    });
-  };
-
-  handleCommandSubmit = async (event) => {
-    event.preventDefault();
-
-    // For displaying user inputs
-    let commands = [...this.state.commands];
-    let selectedVideo = { ...this.state.selectedVideo };
-    let videos = [...this.state.videos];
-    const vdoEvent = this.state.vdoEvent;
-    let instruction = "";
-    let searchTerm = "";
-
-    const inputTerm = this.state.inputTerm.toLowerCase();
-
-    if (!isNaN(inputTerm) && !_.isEmpty(videos)) {
-      if (!_.isEmpty(selectedVideo)) {
-        this.stopVideo();
-      }
-      let index = parseInt(inputTerm);
-      if (index > videos.length) index = videos.length;
-      selectedVideo = { ...videos[index - 1] };
-      videos = []; // For not showing Search list in the menu anymore
-      if (!_.isEmpty(vdoEvent)) {
-        vdoEvent.target.loadVideoById(selectedVideo.id.videoId);
-      }
-      commands.push(`Playing ${selectedVideo.snippet.title}`);
-      instruction = "";
-      searchTerm = "";
+    if (!hashParams.access_token) {
+      window.location.href =
+        'https://accounts.spotify.com/authorize?client_id=230be2f46909426b8b80cac36446b52a&scope=playlist-read-private%20playlist-read-collaborative%20playlist-modify-public%20user-read-recently-played%20playlist-modify-private%20ugc-image-upload%20user-follow-modify%20user-follow-read%20user-library-read%20user-library-modify%20user-read-private%20user-read-email%20user-top-read%20user-read-playback-state&response_type=token&redirect_uri=http://localhost:3000/callback';
     } else {
-      instruction = inputTerm.match(/!\w+/g);
-      if (instruction)
-        instruction = instruction.length > 0 ? instruction[0] : "";
+      this.props.setToken(hashParams.access_token);
+    }
+  }
 
-      searchTerm = instruction
-        ? inputTerm.toLowerCase().split(instruction)[1].trim()
-        : "";
+  componentWillReceiveProps(nextProps) {
+    if (nextProps.token) {
+      this.props.fetchUser(nextProps.token);
     }
 
-    if (instruction === "!volume") {
-      this.setVolume(parseInt(searchTerm));
-      commands.push(`Volume set to: ${searchTerm}%`);
-    } else if (instruction === "!play" || instruction === "!search") {
-      if (searchTerm !== "") videos = await this.searchVideo(searchTerm);
+    if (this.audio !== undefined) {
+      this.audio.volume = nextProps.volume / 100;
     }
+  }
 
-    switch (instruction) {
-      case "!play":
-        if (searchTerm === "") {
-          const videoResumed = this.resumeVideo();
-          const msg = videoResumed
-            ? `Resuming ${selectedVideo.snippet.title}`
-            : "No music on the list.";
-          commands.push(msg);
-        } else {
-          if (!_.isEmpty(selectedVideo)) {
-            this.stopVideo();
-          }
-          selectedVideo = { ...videos[0] };
-          videos = []; // For not showing Search list in the menu
-          if (!_.isEmpty(vdoEvent)) {
-            vdoEvent.target.loadVideoById(selectedVideo.id.videoId);
-          }
-          commands.push(`Playing ${selectedVideo.snippet.title}`);
-        }
-        break;
-      case "!pause":
-        this.pauseVideo();
-        break;
-      case "!resume":
-        const videoResumed = this.resumeVideo();
-        const resumeMsg = videoResumed
-          ? `Resuming ${selectedVideo.snippet.title}`
-          : "No music on the list.";
-        commands.push(resumeMsg);
-        break;
-      case "!stop":
-        const stoppedVideo = this.stopVideo();
-        if (stoppedVideo) {
-          commands.push(`Stopped playing ${selectedVideo.snippet.title}`);
-          selectedVideo = null;
-        } else {
-          commands.push("No music to stop.");
-        }
-        break;
-      default:
-        break;
-    }
-
-    commands = commands.reverse();
-    // localStorage.setItem("commands", commands);
-
-    this.setState({
-      inputTerm: "",
-      commands,
-      videos,
-      selectedVideo,
-    });
-  };
-
-  searchVideo = async (searchTerm) => {
-    console.log("Process key: ", process.env);
-    const response = await youtube.get("/search", {
-      params: {
-        ...baseTerms,
-        q: searchTerm,
-      },
-    });
-    return response.data.items;
-  };
-
-  setVolume = (volume) => {
-    const { vdoEvent } = this.state;
-    if (!_.isEmpty(vdoEvent)) {
-      vdoEvent.target.setVolume(volume);
-      this.setState({
-        vdoPauseTime: vdoEvent.target.getDuration(),
-      });
+  stopSong = () => {
+    if (this.audio) {
+      this.props.stopSong();
+      this.audio.pause();
     }
   };
 
-  pauseVideo = () => {
-    const { vdoEvent } = this.state;
-    if (!_.isEmpty(vdoEvent)) {
-      vdoEvent.target.pauseVideo();
-      this.setState({
-        vdoPauseTime: vdoEvent.target.getDuration(),
-      });
+  pauseSong = () => {
+    if (this.audio) {
+      this.props.pauseSong();
+      this.audio.pause();
     }
   };
 
-  resumeVideo = () => {
-    const { vdoEvent } = this.state;
-    if (!_.isEmpty(vdoEvent)) {
-      vdoEvent.target.playVideo();
-      return 1;
+  resumeSong = () => {
+    if (this.audio) {
+      this.props.resumeSong();
+      this.audio.play();
     }
-    return 0;
   };
 
-  stopVideo = () => {
-    const { vdoEvent } = this.state;
-    if (!_.isEmpty(vdoEvent)) {
-      vdoEvent.target.stopVideo();
-      // this.setState({
-      //   vdoEvent: null,
-      // });
-      return 1;
-    }
-    return 0;
-  };
+  audioControl = (song) => {
+    const { playSong, stopSong } = this.props;
 
-  // The function that toggles between themes
-  toggleTheme = () => {
-    // if the theme is not light, then set it to dark
-    if (this.state.theme === "light") {
-      this.setState({ theme: "dark" });
-      // otherwise, it should be light
+    if (this.audio === undefined) {
+      playSong(song.track);
+      this.audio = new Audio(song.track.preview_url);
+      this.audio.play();
     } else {
-      this.setState({ theme: "light" });
+      stopSong();
+      this.audio.pause();
+      playSong(song.track);
+      this.audio = new Audio(song.track.preview_url);
+      this.audio.play();
     }
   };
 
   render() {
-    const { inputTerm, videos, selectedVideo, commands, theme } = this.state;
-
     return (
-      <ThemeProvider theme={theme === "light" ? lightTheme : darkTheme}>
-        <>
-          <GlobalStyle />
-          <main className="container-fluid d-flex h-100 flex-column">
-            <Navbar />
-            <div className="row main-container flex-fill">
-              <div className="col-3 main-instructions-column">
-                <Instructions theme={theme} onToggleTheme={this.toggleTheme} />
-              </div>
-              <div className="col-6 main-player-column">
-                <Player
-                  video={selectedVideo}
-                  onVideoEvent={(c) => this.handleVideoEvent(c)}
-                />
-              </div>
-              <div className="col-3 main-command-column">
-                <Command
-                  inputTerm={inputTerm}
-                  videos={videos}
-                  commands={commands}
-                  onInputChange={this.handleInputChange}
-                  onCommandSubmit={this.handleCommandSubmit}
-                />
-              </div>
+      <div className="App">
+        <div className="app-container">
+          <div className="left-side-section">
+            <SideMenu />
+            <UserPlaylists />
+            <ArtWork />
+          </div>
+          <div className="main-section">
+            <Header />
+            <div className="main-section-container">
+              <MainHeader
+                pauseSong={this.pauseSong}
+                resumeSong={this.resumeSong}
+              />{' '}
+              <MainView
+                pauseSong={this.pauseSong}
+                resumeSong={this.resumeSong}
+                audioControl={this.audioControl}
+              />
             </div>
-          </main>
-        </>
-      </ThemeProvider>
+          </div>
+          <Footer
+            stopSong={this.stopSong}
+            pauseSong={this.pauseSong}
+            resumeSong={this.resumeSong}
+            audioControl={this.audioControl}
+          />
+        </div>
+      </div>
     );
   }
 }
 
-export default App;
+App.propTypes = {
+  token: PropTypes.string,
+  fetchUser: PropTypes.func,
+  setToken: PropTypes.func,
+  pauseSong: PropTypes.func,
+  playSong: PropTypes.func,
+  stopSong: PropTypes.func,
+  resumeSong: PropTypes.func,
+  volume: PropTypes.number,
+};
+
+const mapStateToProps = (state) => {
+  return {
+    token: state.tokenReducer.token,
+    volume: state.soundReducer.volume,
+  };
+};
+
+const mapDispatchToProps = (dispatch) => {
+  return bindActionCreators(
+    {
+      fetchUser,
+      setToken,
+      playSong,
+      stopSong,
+      pauseSong,
+      resumeSong,
+    },
+    dispatch
+  );
+};
+
+export default connect(mapStateToProps, mapDispatchToProps)(App);
