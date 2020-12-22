@@ -2,7 +2,7 @@ import React from "react";
 
 class Searchbar extends React.Component {
   state = {
-    term: "Type here",
+    term: "",
   };
   handleChange = (event) => {
     this.setState({
